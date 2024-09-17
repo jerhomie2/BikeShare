@@ -33,6 +33,11 @@ humidity <- ggplot(train,
 
 (temp + weather) / (season + humidity)
 
+ggplot(train,
+       mapping = aes(x=windspeed, y = count)) +
+  geom_point() +
+  geom_smooth(se = F)
+
 #-----Linear Regression-----
 
 ## Setup and Fit the Linear Regression Model
@@ -78,3 +83,23 @@ pois_kaggle_submission <- bike_predictions %>%
 
 ## Write out the file
 vroom_write(x=pois_kaggle_submission, file="./BikeShare/PoissonPreds.csv", delim=",")
+
+#-----cleaning-----
+
+train <- train %>% 
+  
+
+bike_recipe <- recipe(Response~..., data=trainData) %>% # Set model formula and dataset2
+  step_mutate(var1=factor(var1, levels=, labels=)) %>% #Make something a factor3
+  step_mutate(newVar=var1*var2) %>% #Create a new variable4
+  step_poly(var, degree=2) %>% #Create polynomial expansion of var5
+  step_date(timestamp, features="dow") %>% # gets day of week6
+  step_time(timestamp, features=c("hour", "minute")) %>% #create time variable7
+  step_dummy(all_nominal_predictors()) %>% #create dummy variables8
+  step_zv(all_predictors()) %>% #removes zero-variance predictors9
+  step_corr(all_predictors(), threshold=0.5) %>% # removes > than .5 corr10
+  step_rm(var) %>% #removes a variables11
+  step_select(var, -var2) #selects columns12
+prepped_recipe <- prep(my_recipe) # Sets up the preprocessing using myDataSet13
+bake(prepped_recipe, new_data=A_Data_Set)
+
