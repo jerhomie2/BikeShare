@@ -19,9 +19,7 @@ bike_recipe <- recipe(count~., data=train) %>% # Set model formula and dataset2
   step_date(datetime, features = c("month")) %>%
   step_mutate(datetime_hour = as.factor(datetime_hour)) %>%
   step_mutate(datetime_month = as.factor(datetime_month)) %>%
-  step_interact(~datetime_hour:workingday) %>%
   step_mutate(season = as.factor(season)) %>%
-  step_dummy(all_nominal_predictors()) %>%
   step_zv(all_predictors()) %>%
   step_rm(c(datetime)) %>%
   step_corr(all_predictors(), threshold = 0.85) %>%
@@ -31,20 +29,19 @@ prepped_recipe <- prep(bike_recipe)
 baked_train <- bake(prepped_recipe, new_data=train) 
 baked_test <- bake(prepped_recipe, new_data=test)
 
-my_mod <- decision_tree(tree_depth = tune(),
-                        cost_complexity = tune(),
-                        min_n=tune()) %>% #Type of model
-  set_engine("rpart") %>% # What R function to use
+my_mod <- rand_forest(mtry = tune(),
+                      min_n=tune(),
+                      trees=500) %>% #Type of model
+  set_engine("ranger") %>% # What R function to use
   set_mode("regression")
 
 ## Set workflow
-tree_wf <- workflow() %>%
+forest_wf <- workflow() %>%
   add_recipe(bike_recipe) %>%
   add_model(my_mod)
 
 ## Grid of values to tune over
-grid_of_tuning_params <- grid_regular(tree_depth(),
-                                      cost_complexity(),
+grid_of_tuning_params <- grid_regular(mtry(range = c(1,50)),
                                       min_n(),
                                       levels = 5)
 
@@ -52,7 +49,7 @@ grid_of_tuning_params <- grid_regular(tree_depth(),
 folds <- vfold_cv(train, v = 5, repeats = 1)
 
 ## Run the CV
-CV_results <- tree_wf %>%
+CV_results <- forest_wf %>%
   tune_grid(resamples = folds,
             grid = grid_of_tuning_params,
             metrics = metric_set(rmse, mae, rsq))
@@ -69,7 +66,7 @@ bestTune <- CV_results %>%
 
 ## Finalize workflow & fit it
 final_wf <-
-  tree_wf %>%
+  forest_wf %>%
   finalize_workflow(bestTune) %>%
   fit(data = train)
 
@@ -86,5 +83,5 @@ kaggle_submission <- lin_preds %>%
   mutate(datetime=as.character(format(datetime))) #needed for right format to Kaggle
 
 ## Write out the file
-vroom_write(x=kaggle_submission, file="./BikeShare/TreePreds.csv", delim=",")
+vroom_write(x=kaggle_submission, file="./BikeShare/ForestPreds.csv", delim=",")
 
