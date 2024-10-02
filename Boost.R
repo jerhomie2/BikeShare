@@ -30,14 +30,15 @@ prepped_recipe <- prep(bike_recipe)
 baked_train <- bake(prepped_recipe, new_data=train) 
 baked_test <- bake(prepped_recipe, new_data=test)
 
-my_mod <- rand_forest(mtry = tune(),
-                      min_n=tune(),
-                      trees=500) %>% #Type of model
-  set_engine("ranger") %>% # What R function to use
-  set_mode("regression")
+my_mod <- boost_tree(mtry = tune(),
+                     min_n=tune(),
+                     trees=50) %>% #Type of model
+  set_engine("xgboost") %>% # What R function to use
+  set_mode("regression") %>%
+  translate()
 
 ## Set workflow
-forest_wf <- workflow() %>%
+boost_wf <- workflow() %>%
   add_recipe(bike_recipe) %>%
   add_model(my_mod)
 
@@ -50,10 +51,10 @@ grid_of_tuning_params <- grid_regular(mtry(range = c(1,50)),
 folds <- vfold_cv(train, v = 5, repeats = 1)
 
 ## Run the CV
-CV_results <- forest_wf %>%
+CV_results <- boost_wf %>%
   tune_grid(resamples = folds,
             grid = grid_of_tuning_params,
-            metrics = metric_set(rmse, mae, rsq))
+            metrics = metric_set(rmse, mae))
 
 ## Plot Results
 collect_metrics(CV_results) %>%
@@ -67,7 +68,7 @@ bestTune <- CV_results %>%
 
 ## Finalize workflow & fit it
 final_wf <-
-  forest_wf %>%
+  boost_wf %>%
   finalize_workflow(bestTune) %>%
   fit(data = train)
 
@@ -84,5 +85,5 @@ kaggle_submission <- lin_preds %>%
   mutate(datetime=as.character(format(datetime))) #needed for right format to Kaggle
 
 ## Write out the file
-vroom_write(x=kaggle_submission, file="./BikeShare/ForestPreds.csv", delim=",")
+vroom_write(x=kaggle_submission, file="./BikeShare/BoostPreds.csv", delim=",")
 

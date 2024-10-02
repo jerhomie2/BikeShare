@@ -2,8 +2,9 @@ library(tidyverse)
 library(tidymodels)
 library(rpart)
 library(vroom)
+library(stacks)
 
-train <- vroom("./BikeShare/train.csv") # like read.csv ish but faster
+train <- vroom("./BikeShare/train.csv") 
 test <- vroom("./BikeShare/test.csv")
 
 train <- train %>%
@@ -24,13 +25,44 @@ bike_recipe <- recipe(count~., data=train) %>% # Set model formula and dataset2
   step_zv(all_predictors()) %>%
   step_rm(c(datetime)) %>%
   step_corr(all_predictors(), threshold = 0.85) %>%
-  step_dummy(all_nominal_predictors()) %>% #make dummy variables7
+  step_dummy(all_nominal_predictors()) %>% #make dummy variables
   step_normalize(all_numeric_predictors()) # Make mean 0, sd=1
 prepped_recipe <- prep(bike_recipe)
 baked_train <- bake(prepped_recipe, new_data=train) 
 baked_test <- bake(prepped_recipe, new_data=test)
 
-my_mod <- rand_forest(mtry = tune(),
+## Split data for CV
+folds <- vfold_cv(train, v = 5, repeats=1)
+
+## Create a control grid
+untunedModel <- control_stack_grid() #If tuning over a grid
+tunedModel <- control_stack_resamples() #If not tuning a model
+
+## Penalized regression model
+preg_model <- linear_reg(penalty=tune(),
+                         mixture=tune()) %>% #Set model and tuning
+  set_engine("glmnet") # Function to fit in R
+
+## Penalized regression workflow
+preg_wf <- workflow() %>%
+  add_recipe(bike_recipe) %>%
+  add_model(preg_model)
+
+## Grid of values to tune over
+preg_tuning_grid <- grid_regular(penalty(),
+                                 mixture(),
+                                 levels = 5) ## L^2 total tuning possibilities
+
+## Run the CV
+preg_models <- preg_wf %>%
+tune_grid(resamples=folds,
+          grid=preg_tuning_grid,
+          metrics=metric_set(rmse, mae),
+          control = untunedModel) # including the control grid in the tuning ensures you can
+                                  # call on it later in the stacked model
+
+## Random forest model
+forest_mod <- rand_forest(mtry=tune(),
                       min_n=tune(),
                       trees=500) %>% #Type of model
   set_engine("ranger") %>% # What R function to use
@@ -39,44 +71,41 @@ my_mod <- rand_forest(mtry = tune(),
 ## Set workflow
 forest_wf <- workflow() %>%
   add_recipe(bike_recipe) %>%
-  add_model(my_mod)
+  add_model(forest_mod)
 
 ## Grid of values to tune over
 grid_of_tuning_params <- grid_regular(mtry(range = c(1,50)),
                                       min_n(),
                                       levels = 5)
 
-## Split data for CV
-folds <- vfold_cv(train, v = 5, repeats = 1)
-
 ## Run the CV
-CV_results <- forest_wf %>%
+forest_mods <- forest_wf %>%
   tune_grid(resamples = folds,
             grid = grid_of_tuning_params,
-            metrics = metric_set(rmse, mae, rsq))
+            metrics = metric_set(rmse, mae),
+            control = untunedModel)
 
-## Plot Results
-collect_metrics(CV_results) %>%
-  filter(.metric == "rmse") %>%
-  ggplot(data = ., aes(x = penalty, y = mean, color = factor(mixture))) +
-  geom_line()
+## Specify which models to include
+my_stack <- stacks() %>%
+  add_candidates(preg_models) %>%
+  add_candidates(forest_mods)
 
-## Find best tuning params
-bestTune <- CV_results %>%
-  select_best(metric = "rmse")
+## Fit the stacked model
+stack_mod <- my_stack %>%
+  blend_predictions() %>% # LASSO penalized regression meta-learner
+  fit_members() ## Fit the members to the dataset
 
-## Finalize workflow & fit it
-final_wf <-
-  forest_wf %>%
-  finalize_workflow(bestTune) %>%
-  fit(data = train)
+## If you want to build your own metalearner you'll have to do so manually
+## using
+stackData <- as_tibble(my_stack)
 
-## Predict
-lin_preds <-final_wf %>% 
-  predict(new_data = test) %>%
+## Use the stacked data to get a prediction
+preds <- stack_mod %>% 
+  predict(new_data=test) %>%
   exp()
 
-kaggle_submission <- lin_preds %>%
+## Kaggle Submission
+kaggle_submission <- preds %>%
   bind_cols(., test) %>% #Bind predictions with test data
   select(datetime, .pred) %>% #Just keep datetime and prediction variables
   rename(count=.pred) %>% #rename pred to count (for submission to Kaggle)
@@ -84,5 +113,9 @@ kaggle_submission <- lin_preds %>%
   mutate(datetime=as.character(format(datetime))) #needed for right format to Kaggle
 
 ## Write out the file
-vroom_write(x=kaggle_submission, file="./BikeShare/ForestPreds.csv", delim=",")
+vroom_write(x=kaggle_submission, file="./BikeShare/Stack.csv", delim=",")
+
+
+
+
 

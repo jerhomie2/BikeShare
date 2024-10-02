@@ -16,59 +16,34 @@ bike_recipe <- recipe(count~., data=train) %>% # Set model formula and dataset2
   step_date(datetime, features = "dow") %>%
   step_time(datetime, features = c("hour")) %>%
   step_date(datetime, features = c("month")) %>%
+  step_date(datetime, features = c("year")) %>%
+  step_mutate(datetime_dow = as.factor(datetime_dow)) %>%
   step_mutate(datetime_hour = as.factor(datetime_hour)) %>%
   step_mutate(datetime_month = as.factor(datetime_month)) %>%
+  step_mutate(datetime_year = as.factor(datetime_year)) %>%
   step_interact(~datetime_hour:workingday) %>%
+  step_interact(~datetime_hour:datetime_dow) %>%
   step_mutate(season = as.factor(season)) %>%
-  step_dummy(all_nominal_predictors()) %>%
   step_zv(all_predictors()) %>%
-  step_rm(c(datetime)) %>%
-  step_corr(all_predictors(), threshold = 0.85) %>%
-  step_dummy(all_nominal_predictors()) %>% #make dummy variables7
+  step_rm(datetime) %>%
+  step_dummy(all_nominal_predictors()) %>% #make dummy variables
   step_normalize(all_numeric_predictors()) # Make mean 0, sd=1
 prepped_recipe <- prep(bike_recipe)
 baked_train <- bake(prepped_recipe, new_data=train) 
 baked_test <- bake(prepped_recipe, new_data=test)
 
-my_mod <- rand_forest(mtry = tune(),
-                      min_n=tune(),
-                      trees=500) %>% #Type of model
-  set_engine("ranger") %>% # What R function to use
+my_mod <- bart(trees=1000) %>% #Type of model
+  set_engine("dbarts") %>% # What R function to use
   set_mode("regression")
 
 ## Set workflow
-forest_wf <- workflow() %>%
+bart_wf <- workflow() %>%
   add_recipe(bike_recipe) %>%
   add_model(my_mod)
 
-## Grid of values to tune over
-grid_of_tuning_params <- grid_regular(mtry(range = c(1,50)),
-                                      min_n(),
-                                      levels = 5)
-
-## Split data for CV
-folds <- vfold_cv(train, v = 5, repeats = 1)
-
-## Run the CV
-CV_results <- forest_wf %>%
-  tune_grid(resamples = folds,
-            grid = grid_of_tuning_params,
-            metrics = metric_set(rmse, mae, rsq))
-
-## Plot Results
-collect_metrics(CV_results) %>%
-  filter(.metric == "rmse") %>%
-  ggplot(data = ., aes(x = penalty, y = mean, color = factor(mixture))) +
-  geom_line()
-
-## Find best tuning params
-bestTune <- CV_results %>%
-  select_best(metric = "rmse")
-
 ## Finalize workflow & fit it
 final_wf <-
-  forest_wf %>%
-  finalize_workflow(bestTune) %>%
+  bart_wf %>%
   fit(data = train)
 
 ## Predict
@@ -84,5 +59,5 @@ kaggle_submission <- lin_preds %>%
   mutate(datetime=as.character(format(datetime))) #needed for right format to Kaggle
 
 ## Write out the file
-vroom_write(x=kaggle_submission, file="./BikeShare/ForestPreds.csv", delim=",")
+vroom_write(x=kaggle_submission, file="./BikeShare/BartPreds.csv", delim=",")
 
