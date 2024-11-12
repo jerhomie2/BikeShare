@@ -10,7 +10,7 @@ train <- train %>%
   subset(select = -c(casual, registered)) %>%
   mutate(count = log(count))
 
-bike_recipe <- recipe(count~., data=train) %>% # Set model formula and dataset2
+bike_recipe <- recipe(count~., data=train) %>% # Set model formula and dataset
   step_mutate(weather = ifelse(weather == 4, 3, weather)) %>%
   step_mutate(weather = as.factor(weather)) %>%
   step_date(datetime, features = "dow") %>%
